@@ -1,0 +1,106 @@
+name: Process game assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Pipeline mode: clean, upscale, slice-grid, slice-components"
+        required: true
+        default: "slice-components"
+        type: choice
+        options:
+          - clean
+          - upscale
+          - slice-grid
+          - slice-components
+      input_file:
+        description: "Input PNG inside the repo, for example assets_raw/zombie.png"
+        required: true
+        default: "assets_raw/input.png"
+      output_dir:
+        description: "Output folder"
+        required: true
+        default: "assets_processed/output"
+      key:
+        description: "Chroma key color"
+        required: true
+        default: "#FF00FF"
+      tolerance:
+        description: "Chroma tolerance"
+        required: true
+        default: "55"
+      scale:
+        description: "Upscale factor"
+        required: true
+        default: "4"
+      rows:
+        description: "Grid rows for slice-grid"
+        required: true
+        default: "4"
+      cols:
+        description: "Grid cols for slice-grid"
+        required: true
+        default: "14"
+      prefix:
+        description: "Output file prefix"
+        required: true
+        default: "sprite"
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Process asset
+        shell: bash
+        run: |
+          set -e
+          MODE="${{ inputs.mode }}"
+          INPUT="${{ inputs.input_file }}"
+          OUTPUT_DIR="${{ inputs.output_dir }}"
+          KEY="${{ inputs.key }}"
+          TOL="${{ inputs.tolerance }}"
+          SCALE="${{ inputs.scale }}"
+          ROWS="${{ inputs.rows }}"
+          COLS="${{ inputs.cols }}"
+          PREFIX="${{ inputs.prefix }}"
+
+          mkdir -p "$OUTPUT_DIR"
+
+          if [ "$MODE" = "upscale" ]; then
+            python3 tools/ashen_asset_pipeline.py upscale "$INPUT" "$OUTPUT_DIR/${PREFIX}_upscaled_${SCALE}x.png" --scale "$SCALE"
+          elif [ "$MODE" = "clean" ]; then
+            python3 tools/ashen_asset_pipeline.py clean "$INPUT" "$OUTPUT_DIR/${PREFIX}_clean.png" --key "$KEY" --tolerance "$TOL" --despill --crop
+          elif [ "$MODE" = "slice-grid" ]; then
+            python3 tools/ashen_asset_pipeline.py slice-grid "$INPUT" "$OUTPUT_DIR" --rows "$ROWS" --cols "$COLS" --key "$KEY" --tolerance "$TOL" --despill --pad 4 --prefix "$PREFIX"
+          elif [ "$MODE" = "slice-components" ]; then
+            python3 tools/ashen_asset_pipeline.py slice-components "$INPUT" "$OUTPUT_DIR" --key "$KEY" --tolerance "$TOL" --despill --min-area 64 --pad 4 --prefix "$PREFIX"
+          else
+            echo "Unknown mode: $MODE"
+            exit 1
+          fi
+
+      - name: Commit processed assets
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Process game assets"
+          file_pattern: "assets_processed/**"
+
+      - name: Upload processed assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-assets
+          path: assets_processed/
