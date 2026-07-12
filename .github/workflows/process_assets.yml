@@ -4,17 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Pipeline mode: clean, upscale, slice-grid, slice-components"
+        description: "Pipeline mode"
         required: true
-        default: "slice-components"
+        default: "process-fx"
         type: choice
         options:
           - clean
           - upscale
           - slice-grid
           - slice-components
+          - process-fx
       input_file:
-        description: "Input PNG inside the repo, for example assets_raw/zombie.png"
+        description: "Input PNG inside the repo, for example assets_raw/particles.png"
         required: true
         default: "assets_raw/input.png"
       output_dir:
@@ -22,11 +23,11 @@ on:
         required: true
         default: "assets_processed/output"
       key:
-        description: "Chroma key color"
+        description: "Chroma key color. Use auto for process-fx"
         required: true
-        default: "#FF00FF"
+        default: "auto"
       tolerance:
-        description: "Chroma tolerance"
+        description: "Simple chroma tolerance for clean/grid/component modes"
         required: true
         default: "55"
       scale:
@@ -38,13 +39,50 @@ on:
         required: true
         default: "4"
       cols:
-        description: "Grid cols for slice-grid"
+        description: "Grid columns for slice-grid"
         required: true
         default: "14"
       prefix:
         description: "Output file prefix"
         required: true
         default: "sprite"
+      palette:
+        description: "FX recolor palette"
+        required: true
+        default: "none"
+        type: choice
+        options:
+          - none
+          - blood
+          - mud
+      transparency_threshold:
+        description: "FX Color-to-Alpha transparency threshold"
+        required: true
+        default: "0.036"
+      opacity_threshold:
+        description: "FX Color-to-Alpha opacity threshold"
+        required: true
+        default: "0.80"
+      knockout_tolerance:
+        description: "Remove pixels still close to the FX chroma color"
+        required: true
+        default: "24"
+      despill_strength:
+        description: "FX border despill strength from 0 to 1"
+        required: true
+        default: "0.80"
+      merge_distance:
+        description: "Merge nearby FX fragments into one sprite"
+        required: true
+        default: "24"
+      min_area:
+        description: "Minimum visible pixel area for automatic extraction"
+        required: true
+        default: "6"
+      pad:
+        description: "Transparent padding around extracted sprites"
+        required: true
+        default: "6"
 
 jobs:
   process:
@@ -67,7 +105,7 @@ jobs:
       - name: Process asset
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           MODE="${{ inputs.mode }}"
           INPUT="${{ inputs.input_file }}"
           OUTPUT_DIR="${{ inputs.output_dir }}"
@@ -77,17 +115,43 @@ jobs:
           ROWS="${{ inputs.rows }}"
           COLS="${{ inputs.cols }}"
           PREFIX="${{ inputs.prefix }}"
+          PALETTE="${{ inputs.palette }}"
+          TRANSPARENCY_THRESHOLD="${{ inputs.transparency_threshold }}"
+          OPACITY_THRESHOLD="${{ inputs.opacity_threshold }}"
+          KNOCKOUT_TOLERANCE="${{ inputs.knockout_tolerance }}"
+          DESPILL_STRENGTH="${{ inputs.despill_strength }}"
+          MERGE_DISTANCE="${{ inputs.merge_distance }}"
+          MIN_AREA="${{ inputs.min_area }}"
+          PAD="${{ inputs.pad }}"
 
           mkdir -p "$OUTPUT_DIR"
 
           if [ "$MODE" = "upscale" ]; then
             python3 tools/ashen_asset_pipeline.py upscale "$INPUT" "$OUTPUT_DIR/${PREFIX}_upscaled_${SCALE}x.png" --scale "$SCALE"
           elif [ "$MODE" = "clean" ]; then
-            python3 tools/ashen_asset_pipeline.py clean "$INPUT" "$OUTPUT_DIR/${PREFIX}_clean.png" --key "$KEY" --tolerance "$TOL" --despill --crop
+            CLEAN_KEY="$KEY"
+            if [ "$CLEAN_KEY" = "auto" ]; then CLEAN_KEY="#FF00FF"; fi
+            python3 tools/ashen_asset_pipeline.py clean "$INPUT" "$OUTPUT_DIR/${PREFIX}_clean.png" --key "$CLEAN_KEY" --tolerance "$TOL" --despill --crop
           elif [ "$MODE" = "slice-grid" ]; then
-            python3 tools/ashen_asset_pipeline.py slice-grid "$INPUT" "$OUTPUT_DIR" --rows "$ROWS" --cols "$COLS" --key "$KEY" --tolerance "$TOL" --despill --pad 4 --prefix "$PREFIX"
+            GRID_KEY="$KEY"
+            if [ "$GRID_KEY" = "auto" ]; then GRID_KEY="#FF00FF"; fi
+            python3 tools/ashen_asset_pipeline.py slice-grid "$INPUT" "$OUTPUT_DIR" --rows "$ROWS" --cols "$COLS" --key "$GRID_KEY" --tolerance "$TOL" --despill --pad "$PAD" --prefix "$PREFIX"
           elif [ "$MODE" = "slice-components" ]; then
-            python3 tools/ashen_asset_pipeline.py slice-components "$INPUT" "$OUTPUT_DIR" --key "$KEY" --tolerance "$TOL" --despill --min-area 64 --pad 4 --prefix "$PREFIX"
+            COMPONENT_KEY="$KEY"
+            if [ "$COMPONENT_KEY" = "auto" ]; then COMPONENT_KEY="#FF00FF"; fi
+            python3 tools/ashen_asset_pipeline.py slice-components "$INPUT" "$OUTPUT_DIR" --key "$COMPONENT_KEY" --tolerance "$TOL" --despill --min-area "$MIN_AREA" --pad "$PAD" --prefix "$PREFIX"
+          elif [ "$MODE" = "process-fx" ]; then
+            python3 tools/process_fx.py "$INPUT" "$OUTPUT_DIR" \
+              --key "$KEY" \
+              --transparency-threshold "$TRANSPARENCY_THRESHOLD" \
+              --opacity-threshold "$OPACITY_THRESHOLD" \
+              --knockout-tolerance "$KNOCKOUT_TOLERANCE" \
+              --despill-strength "$DESPILL_STRENGTH" \
+              --palette "$PALETTE" \
+              --merge-distance "$MERGE_DISTANCE" \
+              --min-area "$MIN_AREA" \
+              --pad "$PAD" \
+              --prefix "$PREFIX"
           else
             echo "Unknown mode: $MODE"
             exit 1
